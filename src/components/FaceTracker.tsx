@@ -2,16 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { useCamera } from "../hooks/useCamera";
 import { useFacePipeline } from "../hooks/useFacePipeline";
 
-const DEFAULT_STATUS = "Click Start Camera to begin.";
+const DEFAULT_STATUS = "Waiting for camera";
 
 const FaceTracker = () => {
   const { start, status, error, stream } = useCamera();
   const [trackingStatus, setTrackingStatus] = useState(DEFAULT_STATUS);
-  const [isVideoReady, setIsVideoReady] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [showFaceMesh, setShowFaceMesh] = useState(true);
   const [showBoundingBox, setShowBoundingBox] = useState(true);
-  const [showRegions, setShowRegions] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -21,7 +18,7 @@ const FaceTracker = () => {
     stream,
     showFaceMesh,
     showBoundingBox,
-    showRegions,
+    showRegions: false,
     onStatusChange: setTrackingStatus,
   });
 
@@ -32,7 +29,7 @@ const FaceTracker = () => {
   }, [error]);
 
   const handleStart = async () => {
-    setTrackingStatus("Requesting camera access...");
+    setTrackingStatus("Waiting for camera");
     await start();
   };
 
@@ -57,71 +54,46 @@ const FaceTracker = () => {
             {statusText}
           </p>
         </div>
-        <div className="relative">
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-600 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300"
-            onClick={() => setDrawerOpen((open) => !open)}
-            aria-expanded={drawerOpen}
-          >
-            Display Options
-          </button>
-          <div
-            className={`absolute right-0 top-full z-10 mt-3 w-60 rounded-2xl border border-slate-200 bg-white p-4 text-sm shadow-xl transition ${
-              drawerOpen ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"
-            }`}
-          >
-            <div className="flex flex-col gap-3 text-slate-700">
-              <label className="flex items-center justify-between gap-3">
-                <span>Show Face Mesh</span>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-slate-900"
-                  checked={showFaceMesh}
-                  onChange={(event) => setShowFaceMesh(event.target.checked)}
-                />
-              </label>
-              <label className="flex items-center justify-between gap-3">
-                <span>Show Bounding Box</span>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-slate-900"
-                  checked={showBoundingBox}
-                  onChange={(event) => setShowBoundingBox(event.target.checked)}
-                />
-              </label>
-              <label className="flex items-center justify-between gap-3">
-                <span>Show Regions</span>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-slate-900"
-                  checked={showRegions}
-                  onChange={(event) => setShowRegions(event.target.checked)}
-                />
-              </label>
-            </div>
-          </div>
+        <div className="flex items-center gap-4 text-xs uppercase tracking-[0.2em] text-slate-500">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-slate-900"
+              checked={showBoundingBox}
+              onChange={(event) => setShowBoundingBox(event.target.checked)}
+            />
+            Bounding Box
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-slate-900"
+              checked={showFaceMesh}
+              onChange={(event) => setShowFaceMesh(event.target.checked)}
+            />
+            Face Mesh
+          </label>
         </div>
       </div>
 
-      <div className="relative mt-6 aspect-video w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/5">
+      <div className="camera-stack relative mt-6 aspect-video w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-950/5">
         <video
           ref={videoRef}
-          className={`h-full w-full object-cover transition-opacity ${
-            stream && isVideoReady ? "opacity-100" : "opacity-0"
-          }`}
+          className="camera-feed"
           autoPlay
           playsInline
           muted
-          onLoadedMetadata={() => setIsVideoReady(true)}
-          onPlaying={() => setIsVideoReady(true)}
-          onPause={() => setIsVideoReady(false)}
+          width={720}
+          height={540}
+          onLoadedMetadata={() => {
+            if (videoRef.current && canvasRef.current) {
+              canvasRef.current.width = videoRef.current.videoWidth;
+              canvasRef.current.height = videoRef.current.videoHeight;
+            }
+          }}
         />
-        <canvas
-          ref={canvasRef}
-          className="pointer-events-none absolute inset-0 h-full w-full"
-        />
-        {(!stream || !isVideoReady) && (
+        <canvas ref={canvasRef} className="camera-overlay" />
+        {!stream && (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
             Camera preview appears here
           </div>

@@ -13,12 +13,6 @@ type NormalizedRect = {
   rotation: number;
 };
 
-type PixelRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
 
 type PipelineOptions = {
   videoRef: RefObject<HTMLVideoElement>;
@@ -39,7 +33,6 @@ type NormalizedLandmark = {
 };
 
 const MIN_CONFIDENCE = 0.6;
-const ROI_PADDING = 0.18;
 const LOG_INTERVAL_MS = 1000;
 
 const clamp = (value: number, min: number, max: number) =>
@@ -63,46 +56,6 @@ const getRelativeBox = (detection: any): NormalizedRect | null => {
   };
 };
 
-const toPixelRect = (
-  rect: NormalizedRect,
-  imageWidth: number,
-  imageHeight: number,
-  padding = 0
-): PixelRect => {
-  const width = rect.width * imageWidth;
-  const height = rect.height * imageHeight;
-  const centerX = rect.xCenter * imageWidth;
-  const centerY = rect.yCenter * imageHeight;
-
-  const paddedWidth = width * (1 + padding);
-  const paddedHeight = height * (1 + padding);
-
-  const x = clamp(centerX - paddedWidth / 2, 0, imageWidth);
-  const y = clamp(centerY - paddedHeight / 2, 0, imageHeight);
-  const right = clamp(centerX + paddedWidth / 2, 0, imageWidth);
-  const bottom = clamp(centerY + paddedHeight / 2, 0, imageHeight);
-
-  return {
-    x: Math.floor(x),
-    y: Math.floor(y),
-    width: Math.max(1, Math.floor(right - x)),
-    height: Math.max(1, Math.floor(bottom - y)),
-  };
-};
-
-const toNormalizedLandmarks = (
-  landmarks: NormalizedLandmark[],
-  roi: PixelRect,
-  imageWidth: number,
-  imageHeight: number
-) =>
-  landmarks.map((landmark) => ({
-    x: (roi.x + landmark.x * roi.width) / imageWidth,
-    y: (roi.y + landmark.y * roi.height) / imageHeight,
-    z: landmark.z,
-    visibility: landmark.visibility,
-    presence: landmark.presence,
-  }));
 
 const toPixelPoint = (
   landmark: NormalizedLandmark,
@@ -191,13 +144,12 @@ export const useFacePipeline = ({
   onStatusChange,
 }: PipelineOptions) => {
   const detectionRef = useRef<FaceDetection | null>(null);
+  const meshRef = useRef<FaceMesh | null>(null);
   const cameraRef = useRef<Camera | null>(null);
-  const roiRef = useRef<PixelRect | null>(null);
   const rectRef = useRef<NormalizedRect | null>(null);
   const landmarksRef = useRef<NormalizedLandmark[] | null>(null);
   const frameSizeRef = useRef<{ width: number; height: number } | null>(null);
   const frameCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const roiCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusRef = useRef<string | null>(null);
   const optionsRef = useRef({
     showFaceMesh,
@@ -212,8 +164,13 @@ export const useFacePipeline = ({
   }, [showFaceMesh, showBoundingBox, showRegions, onStatusChange]);
 
   useEffect(() => {
+    if (!stream) {
+      optionsRef.current.onStatusChange?.("Waiting for camera");
+    }
+  }, [stream]);
+
+  useEffect(() => {
     frameCanvasRef.current = document.createElement("canvas");
-    roiCanvasRef.current = document.createElement("canvas");
 
     const faceDetection = new FaceDetection({
       locateFile: (file) =>
@@ -230,6 +187,7 @@ export const useFacePipeline = ({
     faceMesh.setOptions({
       maxNumFaces: 1,
       refineLandmarks: true,
+      selfieMode: true,
       minDetectionConfidence: MIN_CONFIDENCE,
       minTrackingConfidence: MIN_CONFIDENCE,
     });
@@ -243,12 +201,15 @@ export const useFacePipeline = ({
     const renderOverlay = () => {
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext("2d");
-      const frame = frameSizeRef.current;
-      if (!canvas || !ctx || !frame) return;
+      const video = videoRef.current;
+      const width = video?.videoWidth ?? frameSizeRef.current?.width ?? 0;
+      const height = video?.videoHeight ?? frameSizeRef.current?.height ?? 0;
+      if (!canvas || !ctx || !width || !height) return;
 
-      if (canvas.width !== frame.width) canvas.width = frame.width;
-      if (canvas.height !== frame.height) canvas.height = frame.height;
-      ctx.clearRect(0, 0, frame.width, frame.height);
+      frameSizeRef.current = { width, height };
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+      ctx.clearRect(0, 0, width, height);
 
       const { showBoundingBox: drawBox, showFaceMesh: drawMesh, showRegions: drawZones } =
         optionsRef.current;
@@ -265,7 +226,7 @@ export const useFacePipeline = ({
         faceRegions.forEach((region) => {
           region.polygons.forEach((polygon) => {
             const points = polygon.map((index) =>
-              toPixelPoint(landmarksRef.current![index], frame.width, frame.height)
+              toPixelPoint(landmarksRef.current![index], width, height)
             );
             if (points.length < 3) return;
             ctx.beginPath();
@@ -312,79 +273,62 @@ export const useFacePipeline = ({
       rectRef.current = detection ? getRelativeBox(detection) : null;
 
       if (!rectRef.current) {
-        roiRef.current = null;
         landmarksRef.current = null;
+        console.log("no face");
         updateStatus("No face detected");
         renderOverlay();
         return;
       }
 
-      updateStatus("Tracking face");
-      roiRef.current = toPixelRect(rectRef.current, width, height, ROI_PADDING);
-
-      const roiCanvas = roiCanvasRef.current;
-      const roiCtx = roiCanvas?.getContext("2d");
-      if (roiCanvas && roiCtx && roiRef.current) {
-        roiCanvas.width = roiRef.current.width;
-        roiCanvas.height = roiRef.current.height;
-        roiCtx.drawImage(
-          image,
-          roiRef.current.x,
-          roiRef.current.y,
-          roiRef.current.width,
-          roiRef.current.height,
-          0,
-          0,
-          roiRef.current.width,
-          roiRef.current.height
-        );
-        void faceMesh.send({ image: roiCanvas });
-      }
+      console.log("face detected");
+      updateStatus("Face detected");
 
       renderOverlay();
     });
 
     faceMesh.onResults((results: any) => {
+      console.log("faceMesh results", results);
       const landmarks = results.multiFaceLandmarks?.[0];
       const frame = frameSizeRef.current;
-      const roi = roiRef.current;
-      if (!landmarks || !frame || !roi) {
+      if (!landmarks || !frame) {
         landmarksRef.current = null;
         renderOverlay();
         return;
       }
 
-      landmarksRef.current = toNormalizedLandmarks(landmarks, roi, frame.width, frame.height);
+      landmarksRef.current = landmarks;
 
-      const now = performance.now();
-      if (now - lastLogRef.current > LOG_INTERVAL_MS && frameCanvasRef.current) {
-        lastLogRef.current = now;
-        const frameCtx = frameCanvasRef.current.getContext("2d");
-        if (frameCtx) {
-          const imageData = frameCtx.getImageData(0, 0, frame.width, frame.height);
-          faceRegions.forEach((region) => {
-            const regionPixels = region.polygons.reduce<Uint8ClampedArray[]>(
-              (acc, polygon) => {
-                const points = polygon.map((index) =>
-                  toPixelPoint(landmarksRef.current![index], frame.width, frame.height)
-                );
-                if (points.length < 3) return acc;
-                acc.push(sampleRegionPixels(imageData, points));
-                return acc;
-              },
-              []
-            );
-            const merged = new Uint8ClampedArray(
-              regionPixels.reduce((sum, item) => sum + item.length, 0)
-            );
-            let offset = 0;
-            regionPixels.forEach((chunk) => {
-              merged.set(chunk, offset);
-              offset += chunk.length;
+      if (optionsRef.current.showRegions) {
+        const now = performance.now();
+        if (now - lastLogRef.current > LOG_INTERVAL_MS && frameCanvasRef.current) {
+          lastLogRef.current = now;
+          const frameCtx = frameCanvasRef.current.getContext("2d");
+          if (frameCtx) {
+            const imageData = frameCtx.getImageData(0, 0, frame.width, frame.height);
+            faceRegions.forEach((region) => {
+              const regionPixels = region.polygons.reduce<Uint8ClampedArray[]>(
+                (acc, polygon) => {
+                  const points = polygon.map((index) =>
+                    toPixelPoint(landmarksRef.current![index], frame.width, frame.height)
+                  );
+                  if (points.length < 3) return acc;
+                  acc.push(sampleRegionPixels(imageData, points));
+                  return acc;
+                },
+                []
+              );
+              const merged = new Uint8ClampedArray(
+                regionPixels.reduce((sum, item) => sum + item.length, 0)
+              );
+              let offset = 0;
+              regionPixels.forEach((chunk) => {
+                merged.set(chunk, offset);
+                offset += chunk.length;
+              });
+              analyzePigmentation(merged, region.id);
+              analyzeWrinkles(merged, region.id);
             });
-            analyzePigmentation(merged, region.id);
-            analyzeWrinkles(merged, region.id);
-          });
+          }
         }
       }
 
@@ -392,44 +336,57 @@ export const useFacePipeline = ({
     });
 
     detectionRef.current = faceDetection;
+    meshRef.current = faceMesh;
     return () => {
       cameraRef.current?.stop();
       faceDetection.close();
       faceMesh.close();
       detectionRef.current = null;
+      meshRef.current = null;
     };
   }, [canvasRef, videoRef]);
 
   useEffect(() => {
-    if (!stream || !videoRef.current || !detectionRef.current) return;
+    if (!stream) {
+      console.error("Camera stream not available.");
+      return;
+    }
+    if (!videoRef.current) {
+      console.error("Video element ref is not available.");
+      return;
+    }
+    if (!detectionRef.current || !meshRef.current) return;
 
-    videoRef.current.srcObject = stream;
-    videoRef.current.muted = true;
-    videoRef.current.playsInline = true;
-    const playVideo = () => {
-      const playPromise = videoRef.current?.play();
-      if (playPromise && typeof playPromise.then === "function") {
-        playPromise.catch(() => undefined);
+    const startCamera = async () => {
+      videoRef.current!.srcObject = stream;
+      videoRef.current!.muted = true;
+      videoRef.current!.playsInline = true;
+      try {
+        await videoRef.current!.play();
+      } catch {
+        // Ignore autoplay errors; user gesture already triggered.
       }
-    };
-    videoRef.current.onloadedmetadata = playVideo;
-    playVideo();
-    const camera = new Camera(videoRef.current, {
-      onFrame: async () => {
-        if (!videoRef.current) return;
-        await detectionRef.current?.send({ image: videoRef.current });
-      },
-      width: 720,
-      height: 540,
-    });
+      optionsRef.current.onStatusChange?.("Camera on");
 
-    cameraRef.current?.stop();
-    cameraRef.current = camera;
-    camera.start();
-    optionsRef.current.onStatusChange?.("Camera active. Looking for a face...");
+      const camera = new Camera(videoRef.current!, {
+        onFrame: async () => {
+          if (!videoRef.current) return;
+          await detectionRef.current?.send({ image: videoRef.current });
+          await meshRef.current?.send({ image: videoRef.current });
+        },
+        width: 720,
+        height: 540,
+      });
+
+      cameraRef.current?.stop();
+      cameraRef.current = camera;
+      camera.start();
+    };
+
+    void startCamera();
 
     return () => {
-      camera.stop();
+      cameraRef.current?.stop();
     };
   }, [stream, videoRef]);
 };
