@@ -7,6 +7,7 @@ const DEFAULT_STATUS = "Click Start Camera to begin.";
 const FaceTracker = () => {
   const { start, status, error, stream } = useCamera();
   const [trackingStatus, setTrackingStatus] = useState(DEFAULT_STATUS);
+  const [isVideoReady, setIsVideoReady] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showFaceMesh, setShowFaceMesh] = useState(true);
   const [showBoundingBox, setShowBoundingBox] = useState(true);
@@ -107,17 +108,20 @@ const FaceTracker = () => {
         <video
           ref={videoRef}
           className={`h-full w-full object-cover transition-opacity ${
-            stream ? "opacity-100" : "opacity-0"
+            stream && isVideoReady ? "opacity-100" : "opacity-0"
           }`}
           autoPlay
           playsInline
           muted
+          onLoadedMetadata={() => setIsVideoReady(true)}
+          onPlaying={() => setIsVideoReady(true)}
+          onPause={() => setIsVideoReady(false)}
         />
         <canvas
           ref={canvasRef}
           className="pointer-events-none absolute inset-0 h-full w-full"
         />
-        {!stream && (
+        {(!stream || !isVideoReady) && (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500">
             Camera preview appears here
           </div>

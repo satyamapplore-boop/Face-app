@@ -404,6 +404,16 @@ export const useFacePipeline = ({
     if (!stream || !videoRef.current || !detectionRef.current) return;
 
     videoRef.current.srcObject = stream;
+    videoRef.current.muted = true;
+    videoRef.current.playsInline = true;
+    const playVideo = () => {
+      const playPromise = videoRef.current?.play();
+      if (playPromise && typeof playPromise.then === "function") {
+        playPromise.catch(() => undefined);
+      }
+    };
+    videoRef.current.onloadedmetadata = playVideo;
+    playVideo();
     const camera = new Camera(videoRef.current, {
       onFrame: async () => {
         if (!videoRef.current) return;
