@@ -9,10 +9,10 @@ const App = () => {
             Browser-Only Demo
           </p>
           <h1 className="mt-3 text-4xl font-semibold text-slate-900 md:text-5xl">
-            AI Face Tracking Demo
+            Dermatology Analysis PoC — Phase 1
           </h1>
           <p className="mt-4 text-sm text-slate-600 md:text-base">
-            Real-time MediaPipe FaceMesh tracking directly in your browser.
+            Multi-model MediaPipe pipeline with live regions for future skin analysis.
           </p>
         </header>
 
